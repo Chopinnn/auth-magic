@@ -6,6 +6,8 @@ let axios = require("axios");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+let jwt = require("jsonwebtoken");
+require('dotenv').config();
 
 const instance = axios.create({
   httpsAgent: new https.Agent({
@@ -20,6 +22,7 @@ const options = {
 
 const port = 9997;
 const appId = "9997";
+const secretKey = process.env.SECRET_KEY;
 const app = express();
 https.createServer(options, app).listen(port, () => {
   console.log(`魔术游戏已启动：https://localhost:${port}`);
@@ -31,79 +34,22 @@ app.use(express.static("public"));
 app.use(cors());
 
 
-app.get("/logout", (req, res) => {
+// 检查AccessToken是否有效
+app.get("/checkLogin", (req, res) => {
   let token = req.headers.authorization;
-  instance
-    .get("https://localhost:3000/cas/logout", {
-      headers: {
-        Authorization: token,
-      },
-    })
-    .then((response) => {
-      if (response.data.code === 0) {
-        res.send({
-          code: 0,
-          data: {
-            msg: response.data.data.msg,
-          },
-        });
-      } else {
-        res.send({
-          code: 1,
-          msg: response.data.msg,
-        });
-      }
-    })
-    .catch((err) => {
+  jwt.verify(token, secretKey, (err,payload) => {
+    if (err) {
       res.send({
         code: 1,
-        msg: "退出失败"+err,
+        msg: "AccessToken无效"+err,
       });
-    });
-});
-
-
-app.get("/test", (req, res) => {
-  // 先获取csrfToken
-  instance
-    .get("https://localhost:3000/cas/csrfToken")
-    .then((response) => {
-      let csrfToken = response.data.csrfToken;
-      instance
-        .get("https://localhost:3000/cas/test", {
-          headers: {
-            Authorization: req.cookies["SSO-Cookie"], // 测试按钮是受保护的资源
-            csrftoken: csrfToken,
-          },
-        })
-        .then((response) => {
-          if (response.data.code === 0) {
-            res.send({
-              code: 0,
-              data: {
-                msg: response.data.data.msg,
-              },
-            });
-          } else {
-            res.cookie("SSO-Cookie", "", { maxAge: 0 });
-            res.send({
-              code: 1,
-              msg: response.data.msg,
-            });
-          }
-        })
-        .catch((err) => {
-          res.cookie("SSO-Cookie", "", { maxAge: 0 });
-          res.send({
-            code: 1,
-            msg: "测试失败",
-          });
-        });
-    })
-    .catch((err) => {
+    } else {
       res.send({
-        code: 1,
-        msg: "错误+" + err,
+        code: 0,
+        data: {
+          msg: "AccessToken有效，用户已登录",
+        },
       });
-    });
+    }
+  });
 });

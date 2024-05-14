@@ -34,7 +34,6 @@ window.onload = function () {
       .then((data) => {
         if (data.code === 0) {
           console.log("AccessToken", data.data.AccessToken);
-          console.log(appId)
           // 存储token
           localStorage.setItem(`AccessToken-${appId}`, data.data.AccessToken);
           localStorage.setItem(`RefreshToken-${appId}`, data.data.RefreshToken);
@@ -46,9 +45,12 @@ window.onload = function () {
           console.log(data.msg);
         }
       });
-  } else if (localStorage.getItem(`AccessToken-${appId}`)) {
+  } else if (
+    localStorage.getItem(`AccessToken-${appId}`) &&
+    localStorage.getItem(`RefreshToken-${appId}`)
+  ) {
     console.log("本地验证");
-    // checkLogin()
+    checkLogin();
   } else {
     // 不是认证中心跳转到本页面时，且本地应用不存在token，则会判断是否在其他应用登录过
     checkSSOLogin();
@@ -79,7 +81,7 @@ async function checkSSOLogin() {
   let data = await res.json();
   if (data.code === 0) {
     // 验证通过，开始单点登录
-    console.log('已在其它应用登录过，开始单点登录',data.data.msg);
+    console.log("已在其它应用登录过，开始单点登录", data.data.msg);
     ssoLogin();
   } else {
     // 用户未在其他应用登录过，重定向到认证服务器的登录页面
@@ -87,24 +89,40 @@ async function checkSSOLogin() {
   }
 }
 
-// 检查用户是否登录
-// async function checkLogin() {
-//   let res = await fetch(`https://localhost:${appId}/checkLogin`, {
-//     method: "GET",
-//     headers: {
-//       Authorization: localStorage.getItem(`AccessToken-${appId}`),
-//     },
-//   });
-//   let data = await res.json();
-//   if (data.code === 0) {
-//     console.log("已登录", data.data.msg);
-//   } else {
-//     // 当token失效时，重定向到认证服务器的登录页面
-//     console.log(data.msg);
-//     window.location.href = `https://localhost:3000?appId=${appId}`;
-//   }
-// }
-
+// 先本地通过AccessToken检查用户是否登录，若未登录则使用RefreshToken向服务器验证
+async function checkLogin() {
+  let res = await fetch(`https://localhost:${appId}/checkLogin`, {
+    method: "GET",
+    headers: {
+      Authorization: localStorage.getItem(`AccessToken-${appId}`),
+    },
+  });
+  let data = await res.json();
+  if (data.code === 0) {
+    console.log("AccessToken有效", data.data.msg);
+  } else {
+    // 使用RefreshToken向服务器验证
+    let res = await fetch(`https://localhost:3000/cas/checkLogin`, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Authorization: localStorage.getItem(`RefreshToken-${appId}`),
+      },
+    });
+    let result = await res.json();
+    if (result.code === 0) {
+      // RefreshToken有效，更新AccessToken
+      localStorage.setItem(`AccessToken-${appId}`, result.data.AccessToken);
+      console.log("RefreshToken有效", result.data.msg);
+    } else {
+      // RefreshToken失效
+      // todo:这里应该还要重置数据库中的登录状态
+      localStorage.removeItem(`AccessToken-${appId}`);
+      localStorage.removeItem(`RefreshToken-${appId}`);
+      window.location.href = `https://localhost:3000?appId=${appId}`;
+    }
+  }
+}
 
 // 单点登录：获取授权码authCode
 async function ssoLogin() {
@@ -124,7 +142,7 @@ async function ssoLogin() {
   let result = await res.json();
   if (result?.code === 0) {
     // 单点登录成功，跳转回原应用
-    window.location.href = `https://localhost:${appId}?authCode=${
+    window.location.href = `${result.data.redirectUrl}?authCode=${
       result.data.authCode
     }&username=${result.data.username || ""}&phone=${result.data.phone}`;
   } else {
@@ -135,35 +153,49 @@ async function ssoLogin() {
 
 // 退出登录
 async function logout() {
-  let res = await fetch(`https://localhost:${appId}/logout`, {
+  let res = await fetch(`https://localhost:3000/cas/logout`, {
     method: "GET",
+    credentials: "include",
     headers: {
-      Authorization: localStorage.getItem(`AccessToken-${appId}`),
+      Authorization: localStorage.getItem(`RefreshToken-${appId}`),
     },
   });
   let data = await res.json();
   if (data.code === 0) {
-    window.location.href = `https://localhost:3000`;
-  } else if (data.code === 2) {
-    // 数据库操作失败导致退出失败
-    console.log("退出失败", data.msg);
+    // 退出成功
+    localStorage.removeItem(`AccessToken-${appId}`);
+    localStorage.removeItem(`RefreshToken-${appId}`);
+    window.location.href = `https://localhost:3000?appId=${appId}`;
   } else {
-    console.log("退出失败", data.msg);
+    console.log("退出失败，已经是未登录状态了，或者是数据库修改报错", data.msg);
+    // 刷新页面，重新检查是否登录
+    window.location.href = `https://localhost:${appId}`;
   }
 }
 
 // 权限测试按钮
 async function test() {
-  let res = await fetch(`https://localhost:${appId}/test`, {
+  // 先获取csrfToken
+  let res0 = await fetch(`https://localhost:3000/cas/csrfToken`, {
     method: "GET",
+    credentials: "include",
+  });
+  let data0 = await res0.json();
+  let csrfToken = data0.csrfToken;
+  let res = await fetch(`https://localhost:3000/cas/test`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      Authorization: localStorage.getItem(`AccessToken-${appId}`),
+      csrftoken: csrfToken,
+    },
   });
   let data = await res.json();
   if (data.code === 0) {
-    console.log(data.data.msg);
     window.alert(data.data.msg);
   } else {
-    // 当token失效测试失败时，重定向到认证服务器的登录页面
+    // 当token失效测试失败时，刷新页面
     console.log(data.msg);
-    window.location.href = `https://localhost:3000?appId=${appId}`;
+    window.location.href = `https://localhost:${appId}`;
   }
 }
