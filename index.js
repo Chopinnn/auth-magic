@@ -28,7 +28,7 @@ const app = express();
 const server = https.createServer(options, app)
 
 server.listen(port, () => {
-  console.log(`魔术游戏已启动：https://localhost:${port}`);
+  console.log(`读心术游戏已启动：https://localhost:${port}`);
 });
 
 app.use(express.json());
